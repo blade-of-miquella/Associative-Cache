@@ -13,7 +13,7 @@ const int BLOCK_SIZE = 8;
 const int NUM_BLOCKS_RAM = RAM_SIZE / BLOCK_SIZE;  
 
 const int CACHE_WAYS = 4;
-const int CACHE_NUM_SETS = NUM_BLOCKS_RAM / CACHE_WAYS; 
+const int CACHE_NUM_SETS = NUM_BLOCKS_RAM / (CACHE_WAYS * CACHE_WAYS); 
 
 struct CacheLine {
     bool valid;                 
@@ -51,16 +51,20 @@ int readFromAddress(int address, bool debug = false) {
         cout << "Invalid address!" << endl;
         return -1;
     }
-    int blockNumber = address / BLOCK_SIZE;
+
+    int blockNumber = address / 128;
     int offset = address % BLOCK_SIZE;
+    int lineIndex = (address % 128) / BLOCK_SIZE; 
+    int tag = blockNumber * 4 + (address / 32) % 4;
     int setIndex = blockNumber % CACHE_NUM_SETS;
-    int tag = blockNumber / CACHE_NUM_SETS;
 
     if (debug) {
         cout << "\nReading from address " << address << ":\n"
-            << "  Block number: " << blockNumber << ", offset: " << offset
-            << ", set index: " << setIndex << ", tag: " << tag << endl;
+             << "  Block number: " << blockNumber
+             << ", offset: " << offset << ", set index: " << setIndex
+             << ", tag: " << tag << endl;
     }
+
     for (int way = 0; way < CACHE_WAYS; way++) {
         if (cache[setIndex][way].valid && cache[setIndex][way].tag == tag) {
             hitCount++;
@@ -69,9 +73,11 @@ int readFromAddress(int address, bool debug = false) {
             return cache[setIndex][way].data[offset];
         }
     }
+
     missCount++;
     if (debug)
         cout << "  CACHE MISS (set " << setIndex << "). Loading block from RAM.\n";
+
     int replaceIndex = 0;
     bool foundEmpty = false;
     for (int way = 0; way < CACHE_WAYS; way++) {
@@ -81,6 +87,7 @@ int readFromAddress(int address, bool debug = false) {
             break;
         }
     }
+
     if (!foundEmpty) {
         unsigned long minTime = cache[setIndex][0].fifo_time;
         replaceIndex = 0;
@@ -91,20 +98,25 @@ int readFromAddress(int address, bool debug = false) {
             }
         }
     }
-    int blockStart = blockNumber * BLOCK_SIZE;
+
     cache[setIndex][replaceIndex].valid = true;
     cache[setIndex][replaceIndex].tag = tag;
     cache[setIndex][replaceIndex].fifo_time = globalTime++;
+
     for (int i = 0; i < BLOCK_SIZE; i++) {
-        int ramAddress = blockStart + i;
+        int ramAddress = blockNumber * 128 + lineIndex * BLOCK_SIZE + i;
         cache[setIndex][replaceIndex].data[i] = (ramAddress < RAM_SIZE ? RAM[ramAddress] : 0);
     }
+
     if (debug) {
         cout << "  Loaded block stored in set " << setIndex
-            << ", way " << replaceIndex << endl;
+             << ", way " << replaceIndex << endl;
     }
+
     return cache[setIndex][replaceIndex].data[offset];
 }
+
+
 
 void writeToAddress(int address, int value, bool debug = false) {
     if (address < 0 || address >= RAM_SIZE) {
@@ -197,9 +209,14 @@ void showStatistics() {
 }
 
 void simulateSequentialAccess() {
+    int requests = 0, beginAddr = 0;
+    cout << "Enter number of requests: ";
+    cin >> requests;
+    cout << "Enter start address(0-511): ";
+    cin >> beginAddr;
     cout << "\nSimulating sequential access..." << endl;
-    for (int addr = 0; addr < RAM_SIZE; addr++) {
-        readFromAddress(addr);
+    for (int addr = beginAddr; addr < requests + beginAddr; addr++) {
+        if(addr <= RAM_SIZE) readFromAddress(addr);
     }
     cout << "Sequential access simulation complete" << endl;
 }
@@ -217,11 +234,23 @@ void simulateRandomAccess() {
 }
 
 void simulateLocalAccess() {
-    cout << "\nSimulating local access..." << endl;
-    int start = rand() % (RAM_SIZE - 20);
-    for (int i = 0; i < 50; i++) {
-        int addr = start + (rand() % 20);
-        readFromAddress(addr);
+    int requests = 0, localityRange = 0, numRegions = 0;
+    cout << "Enter number of requests per region: ";
+    cin >> requests;
+    cout << "Enter locality range: ";
+    cin >> localityRange;
+    cout << "Enter number of local regions: ";
+    cin >> numRegions;
+    cout << "\nSimulating multiple local access regions..." << endl;
+    for (int region = 0; region < numRegions; region++) {
+        int start = rand() % (RAM_SIZE - localityRange);
+        cout << "Accessing region " << region + 1 << " starting at address " << start << endl;
+        for (int i = 0; i < requests; i++) {
+            int addr = start + (rand() % localityRange); 
+            if (addr < RAM_SIZE) { 
+                readFromAddress(addr);
+            }
+        }
     }
     cout << "Local access simulation complete" << endl;
 }
